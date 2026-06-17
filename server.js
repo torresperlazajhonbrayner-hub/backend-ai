@@ -11,6 +11,12 @@ import fs from 'fs';
 import bodyParser from 'body-parser'; 
 import { z } from 'zod';
 
+// Agrega esto después de tus importaciones
+const chatSchema = z.object({
+  userId: z.string(),
+  message: z.string(),
+  lang: z.string().optional(),
+});
 
 // =========================================================
 // SEGURIDAD FATAL (Poner al inicio de todo)
@@ -40,8 +46,7 @@ dotenv.config();
 
 const app = express();
 
-// Asegúrate de que esta sea la ruta exacta donde está tu index.html
-app.use(express.static('C:\\Users\\usuario\\Documents\\chat_nuevo'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
