@@ -186,11 +186,15 @@ const supabase = createClient(
 );
 
 // ==========================
-// GROQ
+// GROQ - INICIALIZACIÓN SEGURA
 // ==========================
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
+let groq = null;
+
+if (process.env.GROQ_API_KEY) {
+  groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+} else {
+  console.warn("⚠️ ADVERTENCIA: GROQ_API_KEY no detectada. Las funciones de IA estarán desactivadas.");
+}
 
 // ==========================
 // STRIPE
