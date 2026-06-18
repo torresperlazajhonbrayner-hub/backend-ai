@@ -180,9 +180,6 @@ const catchAsync = (fn) => (req, res, next) => {
 // ==========================
 // SUPABASE
 // ==========================
-console.log("DEBUG SUPABASE_URL:", process.env.SUPABASE_URL ? "OK" : "VACÍO");
-console.log("DEBUG SUPABASE_KEY:", process.env.SUPABASE_KEY ? "OK" : "VACÍO");
-
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
@@ -191,8 +188,6 @@ const supabase = createClient(
 // ==========================
 // GROQ
 // ==========================
-console.log("DEBUG GROQ_API_KEY:", process.env.GROQ_API_KEY ? "OK" : "VACÍO");
-
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
