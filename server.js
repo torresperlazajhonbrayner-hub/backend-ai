@@ -12,6 +12,14 @@ import bodyParser from 'body-parser';
 import { z } from 'zod';
 
 
+// Definición del esquema que faltaba
+const chatSchema = z.object({
+  userId: z.string(),
+  message: z.string(),
+  lang: z.string().optional()
+});
+
+
 // =========================================================
 // SEGURIDAD FATAL (Poner al inicio de todo)
 // =========================================================
@@ -28,7 +36,9 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 
 // Esto imprimirá en tu terminal la ruta exacta donde Express está buscando
 console.log("--- DEBUG ---");
@@ -36,13 +46,20 @@ console.log("Directorio actual:", __dirname);
 // Cambia la línea del log por esta:
 console.log("Archivos encontrados:", fs.readdirSync(__dirname));
 
+
 dotenv.config();
 
+
 const app = express();
+
 
 // Asegúrate de que esta sea la ruta exacta donde está tu index.html
 app.use(express.static('C:\\Users\\usuario\\Documents\\chat_nuevo'));
 
+
+// =================================================================
+// RUTA: WEBHOOK DE STRIPE
+// =================================================================
 app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const sig = req.headers["stripe-signature"];
   let event;
@@ -64,23 +81,6 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
   if (event.type === "checkout.session.completed") {
     const session = event.data.object;
     const userId = session.client_reference_id;
-    
-    // --- DIAGNÓSTICO PROFUNDO ---
-    console.log("------------------------------------------");
-    console.log("🔍 DETECTIVE DE ERRORES INICIADO");
-    console.log("➡️ ID recibido de Stripe (client_reference_id):", userId);
-    
-    // Verificamos qué hay en la tabla antes de hacer nada
-    const { data: checkData, error: checkError } = await supabase
-      .from("user_usage")
-      .select("user_id, plan")
-      .eq("user_id", userId);
-
-    console.log("🔍 ¿Existe este ID en la tabla?", checkData);
-    console.log("🔍 Error de consulta (si lo hay):", checkError);
-    console.log("------------------------------------------");
-    // ----------------------------
-    
     const customerId = session.customer;
 
     if (userId) {
@@ -133,7 +133,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
         subscription_status: "canceled",
         updated_at: new Date().toISOString()
       })
-      .eq("stripe_customer_id", "cus_Uh266YTe5BVT1t");
+      .eq("stripe_customer_id", customerId);
 
     if (error) console.error(`❌ ERROR AL CANCELAR ${customerId}:`, error.message);
     else console.log(`ℹ️ Suscripción cancelada para: ${customerId}`);
@@ -142,12 +142,14 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
   res.json({ received: true });
 });
 
+
 app.use(cors());
 app.use(express.json());
 
-// ==========================
-// CONFIGURACIÓN DE SEGURIDAD (PONLO AQUÍ)
-// ==========================
+
+// =================================================================
+// CONFIGURACIÓN DE SEGURIDAD
+// =================================================================
 const apiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, 
   max: 10, 
@@ -160,6 +162,9 @@ const apiLimiter = rateLimit({
 });
 
 
+// =================================================================
+// CLASE DE MANEJO DE ERRORES
+// =================================================================
 class AppError extends Error {
   constructor(message, statusCode) {
     super(message);
@@ -172,10 +177,14 @@ class AppError extends Error {
   }
 }
 
-// Wrapper para evitar try/catch manual en todas las rutas
+
+// =================================================================
+// UTILIDAD DE MANEJO DE RUTAS ASÍNCRONAS
+// =================================================================
 const catchAsync = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);
 };
+
 
 // ==========================
 // SUPABASE
@@ -185,6 +194,7 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
+
 // ==========================
 // GROQ
 // ==========================
@@ -192,10 +202,12 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
+
 // ==========================
 // STRIPE
 // ==========================
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
 
 // =========================================================
 // CONFIG
@@ -232,6 +244,7 @@ const DOMINIOS_CONFIABLES = [
   "microsoft.com",
   "apple.com"
 ];
+
 
 // =========================================================
 // RESPUESTAS
@@ -300,6 +313,7 @@ const RESPUESTAS = {
   }
 };
 
+
 // =========================================================
 // REACCIONES
 // =========================================================
@@ -337,28 +351,33 @@ const REACCIONES = {
   ]
 };
 
-// =========================================================
-// UTILIDAD
-// =========================================================
 
+// =================================================================
+// FUNCIÓN DE UTILIDAD ALEATORIA
+// =================================================================
 function randomChoice(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-function shuffleArray(array) {
 
+// =================================================================
+// FUNCIÓN DE MEZCLA DE ARREGLOS
+// =================================================================
+function shuffleArray(array) {
   const arr = [...array];
 
   for (let i = arr.length - 1; i > 0; i--) {
-
     const j = Math.floor(Math.random() * (i + 1));
-
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
 
   return arr;
 }
 
+
+// =================================================================
+// FUNCIÓN DE LIMPIEZA DE DOMINIO
+// =================================================================
 function limpiarDominio(dominio) {
   return dominio
     .toLowerCase()
@@ -366,10 +385,12 @@ function limpiarDominio(dominio) {
     .trim();
 }
 
+
+// =================================================================
+// FUNCIÓN DE EXTRACCIÓN DE DOMINIO
+// =================================================================
 function extraerDominio(url) {
-
   try {
-
     if (
       !url.startsWith("http://") &&
       !url.startsWith("https://")
@@ -380,32 +401,27 @@ function extraerDominio(url) {
     const parsed = new URL(url);
 
     return limpiarDominio(parsed.hostname);
-
   } catch {
-
     return "";
   }
 }
 
-// =========================================================
-// DETECCIÓN
-// =========================================================
 
+// =================================================================
+// FUNCIÓN DE DETECCIÓN DE FLAGS
+// =================================================================
 function detectarFlags(dominio, url) {
 
   const flags = [];
-
   const urlLower = url.toLowerCase();
 
   for (const palabra of PALABRAS_SOSPECHOSAS) {
-
     if (urlLower.includes(palabra)) {
       flags.push(palabra);
     }
   }
 
   for (const real of DOMINIOS_CONFIABLES) {
-
     if (
       dominio.includes(real) &&
       dominio !== real
@@ -418,16 +434,15 @@ function detectarFlags(dominio, url) {
   return [...new Set(flags)];
 }
 
-// =========================================================
-// EVALUACIÓN
-// =========================================================
 
+// =================================================================
+// FUNCIÓN DE EVALUACIÓN DE SEGURIDAD
+// =================================================================
 function evaluar(flags) {
 
   let score = 0;
 
   for (const flag of flags) {
-
     if (flag === "suplantacion") {
       score += 4;
     } else {
@@ -446,42 +461,32 @@ function evaluar(flags) {
   return "SEGURO";
 }
 
-// =========================================================
-// GENERADOR
-// =========================================================
 
+// =================================================================
+// FUNCIÓN DE GENERACIÓN DE RESPUESTA
+// =================================================================
 function generarRespuesta(resultado, flags, modo) {
 
   const bloques = [];
 
-  const base =
-    randomChoice(
-      RESPUESTAS[modo][resultado]
-    );
+  const base = randomChoice(RESPUESTAS[modo][resultado]);
 
   bloques.push(base);
 
   const usadas = [];
 
-  const flagsMezclados =
-    shuffleArray(flags);
+  const flagsMezclados = shuffleArray(flags);
 
-  const limite =
-    modo === "free" ? 1 : 2;
+  const limite = modo === "free" ? 1 : 2;
 
   for (const flag of flagsMezclados.slice(0, limite)) {
 
     if (REACCIONES[flag]) {
 
-      const reaccion =
-        randomChoice(
-          REACCIONES[flag]
-        );
+      const reaccion = randomChoice(REACCIONES[flag]);
 
       if (!usadas.includes(reaccion)) {
-
         bloques.push(reaccion);
-
         usadas.push(reaccion);
       }
     }
@@ -490,60 +495,37 @@ function generarRespuesta(resultado, flags, modo) {
   return bloques.join("\n\n").trim();
 }
 
-// =========================================================
-// FUNCIÓN PRINCIPAL
-// =========================================================
 
+// =================================================================
+// FUNCIÓN PRINCIPAL DE ANÁLISIS
+// =================================================================
 function analyzeLink(link, modo = "free") {
 
   modo = modo.toLowerCase().trim();
 
-  if (
-    modo !== "free" &&
-    modo !== "premium"
-  ) {
+  if (modo !== "free" && modo !== "premium") {
     modo = "free";
   }
 
-  const dominio =
-    extraerDominio(link);
-
-  const flags =
-    detectarFlags(
-      dominio,
-      link
-    );
-
-  const resultado =
-    evaluar(flags);
-
-  const mensaje =
-    generarRespuesta(
-      resultado,
-      flags,
-      modo
-    );
+  const dominio = extraerDominio(link);
+  const flags = detectarFlags(dominio, link);
+  const resultado = evaluar(flags);
+  const mensaje = generarRespuesta(resultado, flags, modo);
 
   return {
-
     link,
-
     dominio,
-
     modo,
-
     resultado,
-
     flags,
-
     mensaje
   };
 }
 
-// ==========================
-// CHAT - RUTA PROTEGIDA
-// ==========================
 
+// =================================================================
+// RUTA: CHAT
+// =================================================================
 app.post("/api/v1/chat", apiLimiter, catchAsync(async (req, res, next) => {
   
   // 1. VALIDACIÓN CON ZOD (El portero)
@@ -558,10 +540,10 @@ app.post("/api/v1/chat", apiLimiter, catchAsync(async (req, res, next) => {
   }
 
   // 2. EXTRAEMOS DATOS VALIDADOS
-  const { userId, message, lang } = result.data; // Asegúrate de incluir lang si lo usas
+  const { userId, message, lang } = result.data;
   const chatId = userId;
 
-  // 3. TU LÓGICA DE NEGOCIO (Tal cual la tenías)
+  // 3. LÓGICA DE NEGOCIO
   await ensureUserExists(userId);
   const isPremium = await checkPremiumAccess(userId);
   const plan = isPremium ? "premium" : "free";
@@ -651,10 +633,11 @@ app.post("/api/v1/chat", apiLimiter, catchAsync(async (req, res, next) => {
 }));
 
 
-
+// =================================================================
+// RUTA: TRADUCCIÓN
+// =================================================================
 app.post("/translate", async (req, res) => {
   try {
-
     const { text, lang } = req.body;
 
     if (!text || !lang) {
@@ -668,32 +651,32 @@ app.post("/translate", async (req, res) => {
       ? `
     You are a professional translator.
 
-   Translate the following text to English.
+    Translate the following text to English.
 
-   IMPORTANT:
-   - ONLY return the translated text
-   - DO NOT explain
-   - DO NOT comment
-   - DO NOT add extra sentences
-   - DO NOT say "already translated"
+    IMPORTANT:
+    - ONLY return the translated text
+    - DO NOT explain
+    - DO NOT comment
+    - DO NOT add extra sentences
+    - DO NOT say "already translated"
 
-   Text:
-   ${text}
-   `
+    Text:
+    ${text}
+    `
     : `
-   Eres un traductor profesional.
+    Eres un traductor profesional.
 
-   Traduce el siguiente texto al español.
+    Traduce el siguiente texto al español.
 
-   IMPORTANTE:
-   - SOLO devuelve el texto traducido
-   - NO expliques
-   - NO agregues comentarios
-   - NO digas "ya está traducido"
+    IMPORTANTE:
+    - SOLO devuelve el texto traducido
+    - NO expliques
+    - NO agregues comentarios
+    - NO digas "ya está traducido"
 
-   Texto:
-   ${text}
-   `;
+    Texto:
+    ${text}
+    `;
 
     const completion = await groq.chat.completions.create({
       messages: [
@@ -705,15 +688,13 @@ app.post("/translate", async (req, res) => {
       model: "llama-3.3-70b-versatile",
     });
 
-    const translated =
-      completion?.choices?.[0]?.message?.content || text;
+    const translated = completion?.choices?.[0]?.message?.content || text;
 
     res.json({
       translated
     });
 
   } catch (error) {
-
     console.log("ERROR TRANSLATE:", error);
 
     res.status(500).json({
@@ -722,6 +703,10 @@ app.post("/translate", async (req, res) => {
   }
 });
 
+
+// =================================================================
+// RUTA: GUARDAR IDIOMA
+// =================================================================
 app.post("/save-lang", async (req, res) => {
   try {
     const { userId, lang } = req.body;
@@ -744,9 +729,9 @@ app.post("/save-lang", async (req, res) => {
 });
 
 
-// ==========================
-// STRIPE WEBHOOK (ÚNICO Y DEFINITIVO)
-// ==========================
+// =================================================================
+// RUTA: WEBHOOK DE STRIPE
+// =================================================================
 app.post('/webhook', express.raw({ type: 'application/json' }), async (request, response) => {
   const sig = request.headers['stripe-signature'];
   let event;
@@ -808,17 +793,18 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (request, 
     }
   }
 
-  // ¡ESTA LÍNEA ES LA QUE FALTABA PARA CERRAR EL WEBHOOK!
+  // Confirmación final para Stripe
   response.json({ received: true });
-}); 
+});
 
-// ==========================
-// STRIPE CHECKOUT
-// ==========================
+
+// =================================================================
+// RUTA: CREAR SESIÓN DE CHECKOUT
+// =================================================================
 app.post("/create-checkout-session", async (req, res) => {
   try {
     const { userId } = req.body;
-    // ... resto de tu código igual ...
+    
     console.log("➡️ Intentando crear sesión para USER:", userId);
     console.log("➡️ PRICE_ID:", process.env.PRICE_ID);
 
@@ -857,9 +843,11 @@ app.post("/create-checkout-session", async (req, res) => {
   }
 });
 
-// ==========================
-// 💚 NUEVAS RUTAS
-// ==========================
+
+// =================================================================
+// RUTAS: GESTIÓN DE PAGO Y PORTAL
+// =================================================================
+
 app.get("/success", (req, res) => {
   res.send(`<h1>✅ Pago exitoso</h1><p>Ya puedes volver a tu chat.</p>`);
 });
@@ -894,9 +882,10 @@ app.post('/create-portal-session', async (req, res) => {
   }
 });
 
-// ==========================
-// 🧩 ANALYZE LINK
-// ==========================
+
+// =================================================================
+// RUTA: ANÁLISIS DE ENLACES
+// =================================================================
 app.post("/analyze-link", async (req, res) => {
   try {
     const { link, mode, userId } = req.body;
@@ -916,9 +905,10 @@ app.post("/analyze-link", async (req, res) => {
   }
 });
 
-// ==========================
-// FUNCIONES AUXILIARES
-// ==========================
+
+// =================================================================
+// FUNCIÓN: ASEGURAR EXISTENCIA DE USUARIO
+// =================================================================
 async function ensureUserExists(userId) {
   const { data, error } = await supabase
     .from("user_usage")
@@ -939,6 +929,10 @@ async function ensureUserExists(userId) {
   }
 }
 
+
+// =================================================================
+// FUNCIÓN: VERIFICACIÓN DE ACCESO PREMIUM
+// =================================================================
 async function checkPremiumAccess(userId) {
   const { data: userPlanData, error } = await supabase
     .from("user_usage")
@@ -955,15 +949,16 @@ async function checkPremiumAccess(userId) {
   return currentPlan === "premium";
 }
 
-// =========================================================
-// MIDDLEWARE GLOBAL DE ERRORES (Poner al final de todas las rutas)
-// =========================================================
+
+// =================================================================
+// MIDDLEWARE GLOBAL DE MANEJO DE ERRORES
+// =================================================================
 app.use((err, req, res, next) => {
   console.error("🔥 ERROR DETECTADO:", {
     message: err.message,
     path: req.path,
     method: req.method,
-    stack: err.stack // Útil en desarrollo, en producción podrías omitirlo
+    stack: err.stack 
   });
 
   const statusCode = err.statusCode || 500;
@@ -974,9 +969,10 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ==========================
+
+// =================================================================
 // INICIO DEL SERVIDOR
-// ==========================
+// =================================================================
 app.listen(3000, () => {
   console.log("🚀 Server running on http://localhost:3000");
 });
