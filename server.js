@@ -66,90 +66,6 @@ const app = express();
 app.use(express.static('C:\\Users\\usuario\\Documents\\chat_nuevo'));
 
 
-// =================================================================
-// RUTA: WEBHOOK DE STRIPE
-// =================================================================
-app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
-  const sig = req.headers["stripe-signature"];
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(
-      req.body,
-      sig,
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
-  } catch (err) {
-    console.error("❌ Webhook Error:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  console.log("🔥 STRIPE EVENT RECIBIDO:", event.type);
-
-  // 1. SESIÓN COMPLETADA (Activación Inicial)
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
-    const userId = session.client_reference_id;
-    const customerId = session.customer;
-
-    if (userId) {
-      const { error } = await supabase
-        .from("user_usage")
-        .upsert(
-          {
-            user_id: userId,
-            plan: "premium",
-            subscription_status: "active",
-            stripe_customer_id: customerId,
-            updated_at: new Date().toISOString()
-          },
-          { onConflict: 'user_id' }
-        );
-
-      if (error) console.error("❌ ERROR AL ACTIVAR PREMIUM:", error);
-      else console.log("✅ ÉXITO: Usuario activado como premium.");
-    }
-  }
-
-  // 2. PAGO EXITOSO (Renovación)
-  if (event.type === "invoice.payment_succeeded") {
-    const invoice = event.data.object;
-    const customerId = invoice.customer;
-    const subscriptionId = invoice.subscription;
-
-    const { error } = await supabase
-      .from("user_usage")
-      .update({
-        subscription_status: "active",
-        stripe_subscription_id: subscriptionId,
-        updated_at: new Date().toISOString()
-      })
-      .eq("stripe_customer_id", customerId);
-
-    if (error) console.error("❌ ERROR AL RENOVAR:", error);
-    else console.log("✅ ÉXITO: Suscripción actualizada.");
-  }
-
-  // 3. CANCELACIÓN
-  if (event.type === "customer.subscription.deleted") {
-    const subscription = event.data.object;
-    const customerId = subscription.customer;
-
-    const { error } = await supabase
-      .from("user_usage")
-      .update({
-        plan: "free",
-        subscription_status: "canceled",
-        updated_at: new Date().toISOString()
-      })
-      .eq("stripe_customer_id", customerId);
-
-    if (error) console.error(`❌ ERROR AL CANCELAR ${customerId}:`, error.message);
-    else console.log(`ℹ️ Suscripción cancelada para: ${customerId}`);
-  }
-
-  res.json({ received: true });
-});
 
 
 app.use(cors());
@@ -196,26 +112,32 @@ const catchAsync = (fn) => (req, res, next) => {
 
 
 // ==========================
-// SUPABASE
+// INICIALIZACIÓN DE SERVICIOS
 // ==========================
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_KEY
-);
 
+// Supabase
+let supabase;
+if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+    supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+} else {
+    console.error("⚠️ ADVERTENCIA: Variables de Supabase no cargadas.");
+}
 
-// ==========================
-// GROQ
-// ==========================
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
+// Groq
+let groq;
+if (process.env.GROQ_API_KEY) {
+    groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+} else {
+    console.error("⚠️ ADVERTENCIA: GROQ_API_KEY no cargada.");
+}
 
-
-// ==========================
-// STRIPE
-// ==========================
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+// Stripe
+let stripe;
+if (process.env.STRIPE_SECRET_KEY) {
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+} else {
+    console.error("⚠️ ADVERTENCIA: STRIPE_SECRET_KEY no cargada.");
+}
 
 
 // =========================================================
