@@ -12,6 +12,15 @@ import bodyParser from 'body-parser';
 import { z } from 'zod';
 
 
+// =========================================================
+// BLOQUE DE DIAGNÓSTICO (Ponlo justo aquí)
+// =========================================================
+console.log("--- DEBUG ---");
+console.log("Directorio actual:", process.cwd());
+console.log("Archivos encontrados:", fs.readdirSync(process.cwd()));
+console.log("-------------------");
+
+
 // Definición del esquema que faltaba
 const chatSchema = z.object({
   userId: z.string(),
