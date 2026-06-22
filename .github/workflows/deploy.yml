@@ -1,4 +1,4 @@
-name: Deploy Backend a Render
+name: CI/CD Pipeline
 
 on:
   push:
@@ -6,7 +6,29 @@ on:
       - main
 
 jobs:
+  # 1. El guardia de seguridad (Integración)
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.14'
+
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Ejecutar pruebas
+        run: pytest tests/
+
+  # 2. El despliegue (Solo ocurre si el paso anterior está verde)
   deploy:
+    needs: test  # ESTO ES LA CLAVE: Dice "espera a que test termine bien"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
