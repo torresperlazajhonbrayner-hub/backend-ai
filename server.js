@@ -364,74 +364,91 @@ app.post("/api/v1/chat", apiLimiter, catchAsync(async (req, res, next) => {
   const isPremium = await checkPremiumAccess(userId);
   const plan = isPremium ? "premium" : "free";
 
-  // 3. SELECTOR INTELIGENTE
+  // 3. VALIDACIÓN CENTRALIZADA DE LÍMITE
+  if (!isPremium && await checkUsageLimit(userId)) {
+    return res.status(403).json({ 
+      success: false, 
+      code: "FREE_LIMIT_REACHED", 
+      message: userLang === "en" ? "Limit reached." : "Has alcanzado el límite." 
+    });
+  }
+
+  // 4. SELECTOR INTELIGENTE
   const linkRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)/gi;
   const foundLinks = message.match(linkRegex);
 
-  // CAMINO 1: ANÁLISIS DE ENLACES (IA GENERATIVA)
+  // CAMINO 1: ANÁLISIS DE ENLACES
   if (foundLinks && foundLinks.length > 0) {
-    console.log("🛡️ [Selector] Enlace detectado. Consultando IA Estratega...");
+    console.log(`🛡️ [Selector] Enlace detectado para usuario ${plan.toUpperCase()}. Consultando IA Estratega...`);
     const link = foundLinks[0];
     const analisisTecnico = analyzeLink(link, plan); 
 
-    const prompt = `Analiza este enlace: ${link}. 
-    Datos técnicos encontrados: ${JSON.stringify(analisisTecnico)}. 
-    
-    Tu tarea: Actúa como el experto estratega ScanlynX. Redacta una respuesta única, 
-    profesional y muy útil. 
-    - NO uses plantillas ni frases prefabricadas. 
-    - Varía tu estilo y estructura en cada análisis. 
-    - Enfócate en el valor de negocio y la seguridad del usuario.`;
+    const config = (plan === "premium") ? 
+      { instrucciones: "Actúa como un experto en ciberseguridad. Proporciona un análisis técnico profundo, riesgos potenciales, impacto en el negocio y recomendaciones detalladas." } : 
+      { instrucciones: "Eres ScanlynX, un experto en ciberseguridad. Analiza el enlace y comunica el veredicto con precisión usando emojis, oraciones de 20-40 palabras y lenguaje directo. Prohibido repetir estructuras." };
+
+    const prompt = `Analiza este enlace: ${link}. Datos técnicos: ${JSON.stringify(analisisTecnico)}.\n\nInstrucciones: ${config.instrucciones} - Sé directo.`;
 
     const completion = await groq.chat.completions.create({
-        messages: [
-            { role: "system", content: "Eres ScanlynX, una IA estratega de negocios experta en ciberseguridad." },
-            { role: "user", content: prompt }
-        ],
-        model: "llama-3.3-70b-versatile",
-        temperature: 0.85
+      messages: [{ role: "system", content: "Eres ScanlynX, un sistema de análisis de seguridad web." }, { role: "user", content: prompt }],
+      model: "llama-3.3-70b-versatile",
+      temperature: 0.7
     });
 
     const respuestaUnica = completion.choices[0].message.content;
 
-    await supabase.from("conversations").insert({
-        user_id: userId,
-        user_message: message,
-        ai_response: respuestaUnica
-    });
-
+    // Guardar en BD
+    await supabase.from("conversations").insert({ user_id: userId, user_message: message, ai_response: respuestaUnica });
+    
+    // INCREMENTAR CONTADOR EN CHAT_USAGE
+    await incrementUsage(userId);
+    
     return res.json({ reply: respuestaUnica });
   }
 
   // CAMINO 2: IA ESTRATEGA (Texto normal)
   console.log("🧠 [Selector] Texto detectado. Usando IA Estratega.");
 
-  if (!isPremium) {
-    const { data: usageData } = await supabase.from("chat_usage").select("usage_count").eq("chat_id", userId).maybeSingle();
-    if ((usageData?.usage_count || 0) >= 10) {
-      return res.status(403).json({ success: false, code: "FREE_LIMIT_REACHED", message: userLang === "en" ? "Limit reached." : "Has alcanzado el límite." });
-    }
-  }
-
-  const isEnglish = userLang === "en";
   const { data: history } = await supabase.from("conversations").select("user_message, ai_response").eq("user_id", userId).order("created_at", { ascending: true }).limit(5);
 
-  let messages = [{
-    role: "system",
-    content: isEnglish ? "Expert business strategist..." : "Eres un estratega de negocios digitales..."
-  }];
-
+  let messages = [{ role: "system", content: userLang === "en" ? "Expert business strategist..." : "Eres un estratega de negocios digitales experto en ciberseguridad." }];
   if (history) history.forEach(row => { messages.push({ role: "user", content: row.user_message }, { role: "assistant", content: row.ai_response }); });
   messages.push({ role: "user", content: message });
 
   const completion = await groq.chat.completions.create({ messages, model: "llama-3.3-70b-versatile", ...getAIParams() });
   const reply = completion?.choices?.[0]?.message?.content || "Sin respuesta";
 
+  // Guardar en BD
   await supabase.from("conversations").insert({ user_id: userId, user_message: message, ai_response: reply });
-  await supabase.from("chat_usage").upsert({ chat_id: userId, user_id: userId, usage_count: (await supabase.from("chat_usage").select("usage_count").eq("chat_id", userId).maybeSingle()).data?.usage_count + 1 || 1 });
+  
+  // INCREMENTAR CONTADOR EN CHAT_USAGE
+  await incrementUsage(userId);
 
   return res.json({ reply });
 }));
+
+// --- Función auxiliar para sumar +1 de forma segura ---
+async function incrementUsage(userId) {
+  const { data: usageData } = await supabase.from("chat_usage").select("usage_count").eq("chat_id", userId).maybeSingle();
+  const currentCount = usageData?.usage_count || 0;
+  await supabase.from("chat_usage").upsert({ chat_id: userId, user_id: userId, usage_count: currentCount + 1 });
+}
+
+
+// Validamos el límite contando los registros reales en la base de datos
+async function checkUsageLimit(userId) {
+  const { count, error } = await supabase
+    .from("conversations")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", userId);
+
+  if (error) {
+    console.error("❌ Error al verificar límite:", error);
+    return false; // Si falla, permitimos seguir para no bloquear al usuario injustamente
+  }
+  
+  return count >= 10; // Devuelve true si llegó al límite
+}
 
 
 // =================================================================
