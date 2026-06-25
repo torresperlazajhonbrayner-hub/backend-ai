@@ -62,12 +62,37 @@ dotenv.config();
 const app = express();
 
 
-// Asegúrate de que esta sea la ruta exacta donde está tu index.html
+// 1. WEBHOOK (DEBE IR AQUÍ, ANTES DEL JSON)
+app.post('/webhook', express.raw({ type: 'application/json' }), async (request, response) => {
+  const sig = request.headers['stripe-signature'];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(request.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error(`⚠️ Webhook Error: ${err.message}`);
+    return response.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  // Lógica de actualización a premium
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    const userId = session.client_reference_id; 
+
+    const { error } = await supabase
+      .from("user_usage")
+      .update({ plan: "premium", subscription_status: "active" })
+      .eq("user_id", userId);
+
+    if (error) console.error("❌ Error en Supabase:", error);
+    else console.log("✅ Usuario actualizado a premium");
+  }
+
+  response.json({ received: true });
+});
+
+// 2. MIDDLEWARES GLOBALES (Después del webhook)
 app.use(express.static('C:\\Users\\usuario\\Documents\\chat_nuevo'));
-
-
-
-
 app.use(cors());
 app.use(express.json());
 
@@ -145,9 +170,9 @@ if (process.env.STRIPE_SECRET_KEY) {
 // =================================================================
 function getAIParams() {
     return {
-        temperature: 0.75,         // Equilibrio perfecto entre creatividad y lógica
-        frequency_penalty: 0.4,    // Evita que la IA repita las mismas palabras
-        presence_penalty: 0.3      // Fomenta que explore nuevas ideas
+        temperature: 0.9,        
+        frequency_penalty: 0.7,    
+        presence_penalty:  0.6     
     };
 }
 
@@ -356,7 +381,8 @@ app.post("/api/v1/chat", apiLimiter, catchAsync(async (req, res, next) => {
   const result = chatSchema.safeParse(req.body);
   if (!result.success) return res.status(400).json({ success: false, message: "Datos inválidos", errors: result.error.errors });
 
-  const { userId, message, lang } = result.data;
+  // SE AGREGA chatId
+  const { userId, message, lang, chatId } = result.data;
   const userLang = (lang || "es").toLowerCase();
   
   // 2. LÓGICA DE NEGOCIO
@@ -364,8 +390,8 @@ app.post("/api/v1/chat", apiLimiter, catchAsync(async (req, res, next) => {
   const isPremium = await checkPremiumAccess(userId);
   const plan = isPremium ? "premium" : "free";
 
-  // 3. VALIDACIÓN CENTRALIZADA DE LÍMITE
-  if (!isPremium && await checkUsageLimit(userId)) {
+  // 3. VALIDACIÓN CENTRALIZADA DE LÍMITE (SE PASA chatId)
+  if (!isPremium && await checkUsageLimit(userId, chatId)) {
     return res.status(403).json({ 
       success: false, 
       code: "FREE_LIMIT_REACHED", 
@@ -383,25 +409,60 @@ app.post("/api/v1/chat", apiLimiter, catchAsync(async (req, res, next) => {
     const link = foundLinks[0];
     const analisisTecnico = analyzeLink(link, plan); 
 
-    const config = (plan === "premium") ? 
-      { instrucciones: "Actúa como un experto en ciberseguridad. Proporciona un análisis técnico profundo, riesgos potenciales, impacto en el negocio y recomendaciones detalladas." } : 
-      { instrucciones: "Eres ScanlynX, un experto en ciberseguridad. Analiza el enlace y comunica el veredicto con precisión usando emojis, oraciones de 20-40 palabras y lenguaje directo. Prohibido repetir estructuras." };
+    // Selección aleatoria de emoji según el nivel detectado
+    const emojis = analisisTecnico.nivel === "SEGURO" ? ["🔒", "✅", "✨", "🛡️", "🆗"] : ["⚠️", "🤨", "🚩", "🚫", "🛑"];
+    const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
 
-    const prompt = `Analiza este enlace: ${link}. Datos técnicos: ${JSON.stringify(analisisTecnico)}.\n\nInstrucciones: ${config.instrucciones} - Sé directo.`;
+    // CONFIGURACIÓN DE LOS PROMPTS SEGÚN EL PLAN
+    let systemContent;
+
+    // ==========================================
+    // BLOQUE PREMIUM
+    // ==========================================
+    if (plan === "premium") {
+        systemContent = `Eres ScanlynX Premium, un analista forense de ciberseguridad. 
+        TUS REGLAS:
+        - Análisis Forense: Identifica brevemente qué hace que el sitio sea sospechoso o seguro (ej. irregularidades en el dominio o patrones de suplantación).
+        - Impacto: Menciona qué riesgo corre el usuario (ej. robo de credenciales, malware).
+        - Blindaje: Da una acción de seguridad proactiva inmediata.
+        - Máximo 3 frases, tono analítico, experto y preciso.
+        - Empieza siempre con: ${randomEmoji}.`;
+    }
+    // ==========================================
+    // BLOQUE FREE
+    // ==========================================
+    else {
+        systemContent = `Eres ScanlynX, un guía de seguridad experto y muy práctico.
+        TUS REGLAS:
+        - Tu único trabajo es darle al usuario la confianza para hacer clic o la advertencia para no hacerlo.
+        - Usa solo dos frases: una que indique el estado (seguro/peligroso) y otra que sea el llamado a la acción.
+        - PROHIBIDO mencionar nombres de empresas, certificados, protocolos o explicaciones técnicas.
+        - Sé breve, directo y humano.
+        - Empieza siempre con: ${randomEmoji}.`;
+    }
 
     const completion = await groq.chat.completions.create({
-      messages: [{ role: "system", content: "Eres ScanlynX, un sistema de análisis de seguridad web." }, { role: "user", content: prompt }],
+      messages: [
+        { role: "system", content: systemContent },
+        { role: "user", content: `Analiza este enlace: ${link}. Nivel de riesgo detectado: ${analisisTecnico.nivel}` }
+      ],
       model: "llama-3.3-70b-versatile",
-      temperature: 0.7
+      temperature: 0.95,
+      max_tokens: 70 // Valor estándar equilibrado para ambos planes
     });
 
-    const respuestaUnica = completion.choices[0].message.content;
-
-    // Guardar en BD
-    await supabase.from("conversations").insert({ user_id: userId, user_message: message, ai_response: respuestaUnica });
+    let respuestaUnica = completion.choices[0].message.content.trim();
     
-    // INCREMENTAR CONTADOR EN CHAT_USAGE
-    await incrementUsage(userId);
+    // Asegurar el emoji si la IA lo olvidó
+    if (!respuestaUnica.startsWith(randomEmoji)) {
+      respuestaUnica = `${randomEmoji} ${respuestaUnica}`;
+    }
+
+    // Guardar en BD (SE AGREGA chatId)
+    await supabase.from("conversations").insert({ user_id: userId, chat_id: chatId, user_message: message, ai_response: respuestaUnica });
+    
+    // INCREMENTAR CONTADOR EN CHAT_USAGE (SE PASA chatId)
+    await incrementUsage(userId, chatId);
     
     return res.json({ reply: respuestaUnica });
   }
@@ -409,7 +470,8 @@ app.post("/api/v1/chat", apiLimiter, catchAsync(async (req, res, next) => {
   // CAMINO 2: IA ESTRATEGA (Texto normal)
   console.log("🧠 [Selector] Texto detectado. Usando IA Estratega.");
 
-  const { data: history } = await supabase.from("conversations").select("user_message, ai_response").eq("user_id", userId).order("created_at", { ascending: true }).limit(5);
+  // FILTRADO POR chatId
+  const { data: history } = await supabase.from("conversations").select("user_message, ai_response").eq("user_id", userId).eq("chat_id", chatId).order("created_at", { ascending: true }).limit(5);
 
   let messages = [{ role: "system", content: userLang === "en" ? "Expert business strategist..." : "Eres un estratega de negocios digitales experto en ciberseguridad." }];
   if (history) history.forEach(row => { messages.push({ role: "user", content: row.user_message }, { role: "assistant", content: row.ai_response }); });
@@ -418,36 +480,50 @@ app.post("/api/v1/chat", apiLimiter, catchAsync(async (req, res, next) => {
   const completion = await groq.chat.completions.create({ messages, model: "llama-3.3-70b-versatile", ...getAIParams() });
   const reply = completion?.choices?.[0]?.message?.content || "Sin respuesta";
 
-  // Guardar en BD
-  await supabase.from("conversations").insert({ user_id: userId, user_message: message, ai_response: reply });
+  // Guardar en BD (SE AGREGA chatId)
+  await supabase.from("conversations").insert({ user_id: userId, chat_id: chatId, user_message: message, ai_response: reply });
   
-  // INCREMENTAR CONTADOR EN CHAT_USAGE
-  await incrementUsage(userId);
+  // INCREMENTAR CONTADOR EN CHAT_USAGE (SE PASA chatId)
+  await incrementUsage(userId, chatId);
 
   return res.json({ reply });
 }));
 
-// --- Función auxiliar para sumar +1 de forma segura ---
-async function incrementUsage(userId) {
-  const { data: usageData } = await supabase.from("chat_usage").select("usage_count").eq("chat_id", userId).maybeSingle();
+
+// --- Función auxiliar para sumar +1 de forma específica por chat ---
+async function incrementUsage(userId, chatId) {
+  // Buscamos el uso específico de este chat
+  const { data: usageData } = await supabase
+    .from("chat_usage")
+    .select("usage_count")
+    .eq("user_id", userId)
+    .eq("chat_id", chatId) // Filtramos por chat
+    .maybeSingle();
+
   const currentCount = usageData?.usage_count || 0;
-  await supabase.from("chat_usage").upsert({ chat_id: userId, user_id: userId, usage_count: currentCount + 1 });
+  
+  // Guardamos o actualizamos usando el chatId
+  await supabase.from("chat_usage").upsert({ 
+    chat_id: chatId, 
+    user_id: userId, 
+    usage_count: currentCount + 1 
+  });
 }
 
-
-// Validamos el límite contando los registros reales en la base de datos
-async function checkUsageLimit(userId) {
+// Validamos el límite contando los registros reales de ese chat en la base de datos
+async function checkUsageLimit(userId, chatId) {
   const { count, error } = await supabase
     .from("conversations")
     .select("*", { count: "exact", head: true })
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("chat_id", chatId); // Solo contamos los mensajes de este chat
 
   if (error) {
     console.error("❌ Error al verificar límite:", error);
-    return false; // Si falla, permitimos seguir para no bloquear al usuario injustamente
+    return false; 
   }
   
-  return count >= 10; // Devuelve true si llegó al límite
+  return count >= 10; // Ahora el límite de 10 es por sesión de chat
 }
 
 
