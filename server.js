@@ -390,6 +390,7 @@ app.post("/api/v1/chat", apiLimiter, catchAsync(async (req, res, next) => {
   const isPremium = await checkPremiumAccess(userId);
   const plan = isPremium ? "premium" : "free";
 
+  
   // 3. VALIDACIÓN CENTRALIZADA DE LÍMITE (SE PASA chatId)
   if (!isPremium && await checkUsageLimit(userId, chatId)) {
     return res.status(403).json({ 
@@ -420,14 +421,38 @@ app.post("/api/v1/chat", apiLimiter, catchAsync(async (req, res, next) => {
     // BLOQUE PREMIUM
     // ==========================================
     if (plan === "premium") {
-        systemContent = `Eres ScanlynX Premium, un analista forense de ciberseguridad. 
-        TUS REGLAS:
-        - Análisis Forense: Identifica brevemente qué hace que el sitio sea sospechoso o seguro (ej. irregularidades en el dominio o patrones de suplantación).
-        - Impacto: Menciona qué riesgo corre el usuario (ej. robo de credenciales, malware).
-        - Blindaje: Da una acción de seguridad proactiva inmediata.
-        - Máximo 3 frases, tono analítico, experto y preciso.
-        - Empieza siempre con: ${randomEmoji}.`;
+       systemContent = `Eres ScanlynX, un auditor experto en autenticidad web. Tu misión es comparar el enlace analizado contra las características estándar de un sitio web oficial y seguro.
+
+       Debes responder usando estrictamente este formato:
+
+       🛡️ Análisis de Seguridad: ${randomEmoji}
+
+       **ANÁLISIS COMPARATIVO**
+       Compara el enlace analizado contra el estándar de un sitio oficial legítimo. Contrasta elementos clave (URL, estructura, certificados, contenido) frente a lo que se esperaría de una entidad oficial. Resalta qué hace que este enlace se vea sospechoso o si realmente mantiene los estándares de un sitio original.
+
+       **ESTADO**
+       [Clasificación breve: ej. Sitio Original / Sospechoso / Intento de Suplantación].
+
+       **DETALLES**
+       [Breve descripción técnica del sitio analizado].
+
+       **CARACTERÍSTICAS DETECTADAS**
+       [Enumera los puntos clave: HTTPS, certificados, trackers, enlaces externos].
+
+       **RECOMENDACIÓN**
+       [Consejo estratégico para que el usuario tome su decisión].
+
+       **POSIBLES RIESGOS**
+       [Qué podría pasar si este sitio intenta suplantar a un oficial].
+
+       ---
+       REGLAS DE ORO:
+       - EN "ANÁLISIS COMPARATIVO": Si el enlace es dudoso, compáralo explícitamente con los estándares de un sitio oficial. Indica qué le falta o qué tiene de más (ej: "A diferencia del sitio oficial, este dominio carece de X o presenta Y anomalía").
+       - Prohibido usar etiquetas como "Diagnóstico", "Protocolo", "Resultado".
+       - Tono: Sofisticado, empoderador y preventivo.
+       - Máximo 300 tokens.`;
     }
+    
     // ==========================================
     // BLOQUE FREE
     // ==========================================
@@ -448,7 +473,7 @@ app.post("/api/v1/chat", apiLimiter, catchAsync(async (req, res, next) => {
       ],
       model: "llama-3.3-70b-versatile",
       temperature: 0.95,
-      max_tokens: 70 // Valor estándar equilibrado para ambos planes
+      max_tokens: 300 // Valor estándar equilibrado para ambos planes
     });
 
     let respuestaUnica = completion.choices[0].message.content.trim();
